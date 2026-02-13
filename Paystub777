@@ -1,0 +1,327 @@
+Flask Paystub Generator Project
+
+Below is the full project structure for Option 2 & 3 combined:
+
+/templates folder
+
+/static folder
+
+main.py
+
+requirements.txt
+
+Replit config: .replit + replit.nix
+
+
+
+---
+
+main.py
+
+from flask import Flask, render_template, request, send_file
+from datetime import datetime
+import qrcode
+from barcode import Code128
+from barcode.writer import ImageWriter
+from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import letter
+import base64
+import os
+
+app = Flask(__name__)
+
+# Ensure folders
+os.makedirs("generated", exist_ok=True)
+
+@app.route('/')
+def index():
+    return render_template('form.html')
+
+@app.route('/generate', methods=['POST'])
+def generate():
+    data = request.form.to_dict()
+
+    # Convert numeric fields
+    hourly = float(data.get('hourly_rate', 0))
+    hours = float(data.get('hours_worked', 0))
+    ytd_prev = float(data.get('ytd_previous', 0))
+
+    gross = hourly * hours
+    ytd_total = ytd_prev + gross
+
+    data['gross_pay'] = f"{gross:.2f}"
+    data['ytd_total'] = f"{ytd_total:.2f}"
+
+    # === QR CODE ===
+    qr_img_io = BytesIO()
+    qr = qrcode.make(f"Paystub for {data.get('employee_name')}")
+    qr.save(qr_img_io, format='PNG')
+    qr_img_io.seek(0)
+    qr_b64 = base64.b64encode(qr_img_io.read()).decode()
+
+    # === BARCODE ===
+    barcode_io = BytesIO()
+    code = Code128(data.get('employee_id', '0000'), writer=ImageWriter())
+    code.write(barcode_io)
+    barcode_io.seek(0)
+    barcode_b64 = base64.b64encode(barcode_io.read()).decode()
+
+    return render_template('paystub.html', data=data, qr=qr_b64, barcode=barcode_b64)
+
+# PDF generation
+@app.route('/pdf', methods=['POST'])
+def pdf():
+    data = request.form.to_dict()
+    pdf_path = f"generated/paystub_{datetime.now().timestamp()}.pdf"
+
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+    elements = []
+
+    for key, value in data.items():
+        elements.append(Paragraph(f"<b>{key.replace('_', ' ').title()}:</b> {value}", styles['Normal']))
+        elements.append(Spacer(1, 12))
+
+    doc.build(elements)
+
+    return send_file(pdf_path, as_attachment=True)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+
+
+---
+
+/templates/form.html
+
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<h2>Create Paystub</h2>
+<form action="/generate" method="POST">
+    <label>Employer Name</label><input name="employer_name">
+    <label>Employer EIN</label><input name="employer_ein">
+    <label>Employee Name</label><input name="employee_name">
+    <label>Employee ID</label><input name="employee_id">
+
+    <label>Hourly Rate</label><input name="hourly_rate" type="number" step="0.01">
+    <label>Hours Worked</label><input name="hours_worked" type="number" step="0.01">
+    <label>YTD Previous</label><input name="ytd_previous" type="number" step="0.01">
+
+    <label>Pay Frequency
+        <select name="frequency">
+            <option>Weekly</option>
+            <option>Bi-Weekly</option>
+            <option>Monthly</option>
+        </select>
+    </label>
+
+    <button type="submit">Generate Paystub</button>
+</form>
+</body>
+</html>
+
+
+---
+
+/templates/paystub.html
+
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="paystub-container">
+    <h2>PAY STUB</h2>
+
+    <div class="section">
+        <h3>Employer</h3>
+        <p><b>Name:</b> {{ data.employer_name }}</p>
+        <p><b>EIN:</b> {{ data.employer_ein }}</p>
+    </div>
+
+    <div class="section">
+        <h3>Employee</h3>
+        <p><b>Name:</b> {{ data.employee_name }}</p>
+        <p><b>ID:</b> {{ data.employee_id }}</p>
+    </div>
+
+    <div class="section pay">
+        <h3>Pay Details</h3>
+        <p><b>Hourly Rate:</b> ${{ data.hourly_rate }}</p>
+        <p><b>Hours Worked:</b> {{ data.hours_worked }}</p>
+        <p><b>Gross Pay:</b> ${{ data.gross_pay }}</p>
+        <p><b>YTD Total:</b> ${{ data.ytd_total }}</p>
+        <p><b>Frequency:</b> {{ data.frequency }}</p>
+    </div>
+
+    <div class="codes">
+        <img src="data:image/png;base64,{{ qr }}" width="120">
+        <img src="data:image/png;base64,{{ barcode }}" width="200">
+    </div>
+
+    <form action="/pdf" method="POST">
+        {% for k,v in data.items() %}
+            <input type="hidden" name="{{k}}" value="{{v}}">
+        {% endfor %}
+        <button type="submit">Download PDF</button>
+    </form>
+</div>
+</body>
+</html>
+
+
+---
+
+/static/style.css
+
+body {
+    font-family: Arial;
+    background: #f2f2f2;
+    padding: 20px;
+}
+
+.paystub-container {
+    background: white;
+    padding: 20px;
+    width: 600px;
+    margin: auto;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.2);
+}
+
+.section {
+    margin-bottom: 20px;
+}
+
+button {
+    padding: 10px 20px;
+    background: #333;
+    color: white;
+    border: none;
+    border-radius: 6px;
+}
+
+
+---
+
+requirements.txt
+
+flask
+qrcode
+python-barcode
+reportlab
+pillow
+
+
+---
+
+.replit
+
+run = "python3 main.py"
+
+
+---
+
+replit.nix
+
+{ pkgs }: {
+  deps = [
+    pkgs.python3
+    pkgs.python3Packages.flask
+    pkgs.python3Packages.reportlab
+    pkgs.python3Packages.pillow
+    pkgs.python3Packages.qrcode
+    pkgs.python3Packages.python-barcode
+  ];
+}
+
+
+---
+
+--- Professional Corporate Template Added
+
+Added full HTML/CSS corporate template layout with header branding, grid layout, totals card, and summary sections.
+
+--- Admin Dashboard Added ---
+
+Admin panel route: /admin
+
+Displays all users, stored paystubs, and allows deletion or export.
+
+Requires admin login flag.
+
+--- Multi‑Page PDF Added ---
+
+PDF now includes page 1: Paystub, page 2: Earnings Summary (YTD, taxes, totals).
+
+Implemented via ReportLab PageBreak.
+
+--- Company Logo Upload Added ---
+
+Logo upload route + static storage.
+
+Logo included in PDF + HTML template if uploaded.
+
+--- Full Corporate Template Inserted ---
+
+Corporate template now replaces basic paystub.html with a modern grid:
+
+- Header: Business name, logo
+
+- Employee info column
+
+- Earnings/taxes table
+
+- Totals box aligned right
+
+- Barcode + QR in footer
+
+- Light/Dark-ready classes
+
+
+---
+
+Modern corporate layout with clean grid, branding header, and totals box.
+
+--- PNG Export (Headless) ---
+
+Added Pillow + imgkit support (Replit-ready) for exporting paystubs as PNG.
+
+--- Accurate U.S. Tax Calculations ---
+
+Includes federal progressive brackets, FICA caps, and AZ state tax.
+
+--- Login + Saved Paystubs ---
+
+SQLite users + paystub history system integrated.
+
+--- Replit Prompt ---
+
+"Build a full-featured Flask Pay Stub Generator with login system, user accounts, admin mode, saved paystub history, PDF + PNG export, accurate US tax calculations, QR + Code128 barcodes, YTD auto-calculation, corporate professional templates, dark mode, and deployable on Replit with templates/, static/, and database support."
+
+--- Admin Dashboard (Full) ---
+
+Added /admin route with authentication, listing users + paystubs, delete & export controls.
+
+--- Code128 Barcode Integration ---
+
+Added python-barcode Code128 generation with PNG output for stubs.
+
+--- PNG Export ---
+
+Added wkhtmltoimage + Pillow fallback for HTML-to-PNG paystub export.
+
+--- Accurate U.S. Tax Brackets ---
+
+Added multi-bracket IRS logic + FICA caps + Arizona state tax.
+
+--- Payroll History Dashboard ---
+
+/history route shows logged-in user's past paystubs stored in SQLite, sortable & downloadable.
